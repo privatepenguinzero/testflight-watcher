@@ -44,6 +44,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # I tag li decidiamo tutti qui sotto: senza questo l'action
+          # aggiungerebbe `latest` da sola, duplicandolo.
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
