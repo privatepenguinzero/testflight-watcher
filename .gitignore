@@ -1,0 +1,13 @@
+# Contiene il token del bot Telegram: non deve MAI finire in un repo
+.env
+
+# Stato locale del monitor
+data/
+*.corrupt
+.data-*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

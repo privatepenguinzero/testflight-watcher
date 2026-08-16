@@ -1,0 +1,26 @@
+services:
+  testflight-watcher:
+    build: .
+    container_name: testflight-watcher
+    restart: unless-stopped
+    # Serve per poter scrivere su ./data.
+    # Con podman rootless NON è root vero: l'UID 0 del container viene
+    # mappato sull'utente dell'host (1000), quindi i file restano 1000:1000.
+    # Se un giorno passi a Docker rootful, togli questa riga e usa
+    # l'utente non-root definito nel Dockerfile, oppure i file scritti nel
+    # volume finiranno di proprietà di root.
+    user: "0:0"
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
+      # Fingerprint TLS impersonato da curl_cffi
+      - IMPERSONATE=${IMPERSONATE:-safari17_0}
+    volumes:
+      # Mappa solo la CARTELLA, non il file singolo!
+      - ./data:/app/data
+    networks:
+      - frontend
+networks:
+  frontend:
+    external: true
