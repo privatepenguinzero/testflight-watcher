@@ -52,6 +52,10 @@ class NotifierFinto:
     def cache(self):
         return [m for m in self.messaggi if "Risposte dalla cache" in m]
 
+    @property
+    def blocchi(self):
+        return [m for m in self.messaggi if "rifiutate da Apple" in m]
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -60,12 +64,17 @@ def store(tmp_path):
     return s
 
 
-def monitor(store, client, notifier):
-    return Monitor(store, client, notifier, interval=300)
+def monitor(store, client, notifier, stagger=(0, 0)):
+    # stagger azzerato: i test non devono aspettare davvero.
+    return Monitor(store, client, notifier, interval=300, stagger=stagger)
 
 
 def ok(body, key=None):
     return Fetched(status_code=200, body=body, correlation_key=key)
+
+
+def rifiutato(codice=429, retry_after=None):
+    return Fetched(status_code=codice, body="", retry_after=retry_after)
 
 
 # ── Il caso che prima non funzionava ────────────────────────────────────────
@@ -181,6 +190,99 @@ def test_anomalia_che_rientra_e_si_ripresenta_avvisa_di_nuovo(store):
     m.check_once()
 
     assert len(n.anomalie) == 2
+
+
+# ── Rifiuti da parte di Apple ───────────────────────────────────────────────
+
+def test_un_rifiuto_ferma_l_app_a_lungo_non_per_un_giro(store):
+    """403/429 non è un guasto passeggero: insistere peggiora le cose."""
+    c = ClientFinto(rifiutato(429))
+    m = monitor(store, c, NotifierFinto())
+
+    m.check_once()
+    assert c.chiamate == 1
+
+    # con il backoff dei soli errori di rete ritenterebbe dopo 1 giro
+    for _ in range(7):
+        m.check_once()
+    assert c.chiamate == 1, "deve restare fermo ben oltre il primo giro"
+
+
+def test_un_rifiuto_avvisa_su_telegram(store):
+    """Essere bloccati è esattamente il guasto che non deve restare muto."""
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(rifiutato(403)), n)
+
+    m.check_once()
+
+    assert len(n.blocchi) == 1
+    assert "403" in n.blocchi[0]
+
+
+def test_l_avviso_di_blocco_non_si_ripete(store):
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(rifiutato(429)), n)
+
+    for _ in range(40):
+        m.check_once()
+
+    assert len(n.blocchi) == 1
+
+
+def test_retry_after_viene_rispettato(store):
+    """Se il server dice quanto aspettare, si fa esattamente quello."""
+    c = ClientFinto(rifiutato(429, retry_after=900))
+    m = monitor(store, c, NotifierFinto())  # interval=300 -> 900s = 3 giri saltati
+
+    m.check_once()
+    for _ in range(3):
+        m.check_once()
+    assert c.chiamate == 1, "ancora in attesa"
+
+    m.check_once()
+    assert c.chiamate == 2, "ripreso dopo i 900s richiesti"
+
+
+def test_un_rifiuto_non_altera_lo_stato_del_beta(store):
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(APERTO), rifiutato(403)), n)
+
+    m.check_once()
+    m.check_once()
+
+    assert store.apps()["aBcD1234"]["state"] == "open"
+    assert len(n.disponibilita) == 1
+
+
+def test_dopo_un_successo_il_backoff_del_blocco_si_azzera(store):
+    n = NotifierFinto()
+    c = ClientFinto(rifiutato(429), ok(APERTO), rifiutato(429))
+    m = monitor(store, c, n)
+
+    m.check_once()                       # bloccato
+    for _ in range(9):
+        m.check_once()                   # attende, poi riprende con successo
+    assert c.chiamate == 2
+
+    for _ in range(9):
+        m.check_once()
+    assert len(n.blocchi) == 2, "un nuovo blocco dopo un successo è un evento nuovo"
+
+
+# ── Distanziamento delle richieste ──────────────────────────────────────────
+
+def test_le_app_vengono_distanziate_ma_non_la_prima(store):
+    """Con più app in lista le richieste non devono partire tutte insieme."""
+    store.add("eFgH5678", "Seconda")
+    store.add("iJkL9012", "Terza")
+
+    pause = []
+    m = monitor(store, ClientFinto(ok(PIENO)), NotifierFinto(), stagger=(1, 1))
+    m._pause_between_apps = lambda: pause.append(1)
+
+    m.check_once()
+
+    assert len(pause) == 2, "3 app -> 2 pause, nessuna prima della prima"
 
 
 # ── Freschezza delle risposte ───────────────────────────────────────────────

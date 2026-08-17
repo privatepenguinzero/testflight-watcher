@@ -60,12 +60,40 @@ def check_url(tf_id: str) -> str:
 # accorgersi se un giorno il cache-buster smettesse di funzionare.
 CORRELATION_HEADER = "X-Apple-Jingle-Correlation-Key"
 
+# Apple oggi non manda Retry-After sulle pagine di join, ma se iniziasse a
+# limitarci sarebbe il modo corretto per dirci quanto aspettare.
+RETRY_AFTER_HEADER = "Retry-After"
+
+# Codici con cui un server dice "ti sto rifiutando", da distinguere da un
+# guasto di rete: meritano una pausa lunga, non un ritentativo immediato.
+BLOCKED_STATUSES = (401, 403, 429)
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    """Secondi di attesa richiesti dal server.
+
+    La specifica ammette anche una data HTTP: in quel caso rinunciamo e
+    lasciamo decidere al backoff, piuttosto che sbagliare il calcolo.
+    """
+    if not value:
+        return None
+    try:
+        secondi = int(value.strip())
+    except ValueError:
+        return None
+    return secondi if secondi > 0 else None
+
 
 @dataclass(frozen=True)
 class Fetched:
     status_code: int
     body: str
     correlation_key: str | None = None
+    retry_after: int | None = None
+
+    @property
+    def blocked(self) -> bool:
+        return self.status_code in BLOCKED_STATUSES
 
 
 class TestFlightClient:
@@ -85,4 +113,5 @@ class TestFlightClient:
             status_code=r.status_code,
             body=r.text,
             correlation_key=r.headers.get(CORRELATION_HEADER),
+            retry_after=_parse_retry_after(r.headers.get(RETRY_AFTER_HEADER)),
         )

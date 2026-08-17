@@ -22,13 +22,23 @@ log = logging.getLogger(__name__)
 # vengono controllate normalmente.
 MAX_BACKOFF_CYCLES = 32
 
+# Un rifiuto esplicito (403/429) non è un guasto passeggero: ritentare al giro
+# dopo è il modo migliore per farsi bloccare più a lungo. Si riparte da una
+# pausa già sostanziosa.
+BLOCKED_INITIAL_CYCLES = 8
+
+# Con più app in lista le richieste partirebbero tutte insieme a ogni ciclo.
+# Distanziarle riduce il picco istantaneo e assomiglia di più a un uso umano.
+DEFAULT_STAGGER = (2.0, 8.0)
+
 
 class Monitor:
-    def __init__(self, store, client, notifier, interval: int):
+    def __init__(self, store, client, notifier, interval: int, stagger=DEFAULT_STAGGER):
         self._store = store
         self._client = client
         self._notifier = notifier
         self._interval = interval
+        self._stagger = stagger
         # Stato del backoff: volutamente in memoria, non nel file JSON. Al
         # riavvio si riparte puliti, che è il comportamento desiderato.
         self._failures: dict[str, int] = {}
@@ -38,6 +48,8 @@ class Monitor:
         # riavvio si riparte puliti.
         self._last_key: dict[str, str] = {}
         self._cache_warned: set[str] = set()
+        self._blocks: dict[str, int] = {}
+        self._block_warned: set[str] = set()
 
     # ── Un singolo controllo ───────────────────────────────────────────────
     def check_app(self, tf_id: str, app: dict) -> None:
@@ -48,6 +60,10 @@ class Monitor:
             fetched = self._client.fetch(tf_id)
         except Exception as e:
             self._register_failure(tf_id, name, e)
+            return
+
+        if fetched.blocked:
+            self._register_block(tf_id, name, fetched)
             return
 
         self._check_freshness(tf_id, name, fetched)
@@ -61,6 +77,8 @@ class Monitor:
         # Successo: il backoff si azzera.
         self._failures.pop(tf_id, None)
         self._skip.pop(tf_id, None)
+        self._blocks.pop(tf_id, None)
+        self._block_warned.discard(tf_id)
 
         self._alert_if_anomalous(tf_id, name, app, detection)
         self._notify_if_changed(tf_id, name, prev, detection)
@@ -85,6 +103,44 @@ class Monitor:
         log.warning(
             "Controllo fallito per %s (%s): %s — riprovo fra %d giri",
             name, tf_id, reason, self._skip[tf_id],
+        )
+
+    def _register_block(self, tf_id: str, name: str, fetched) -> None:
+        """Apple ci sta rifiutando: ci si ferma a lungo e si avvisa.
+
+        Diverso da un guasto di rete. Insistere al giro dopo è il modo
+        migliore per farsi bloccare più a lungo, quindi si riparte da una
+        pausa già ampia e la si raddoppia a ogni rifiuto successivo.
+
+        Lo stato del beta non viene toccato: non sappiamo com'è messo, e
+        l'ultimo valore noto è più utile di una supposizione.
+        """
+        count = self._blocks.get(tf_id, 0) + 1
+        self._blocks[tf_id] = count
+
+        if fetched.retry_after:
+            # Se il server dice quanto aspettare, si fa esattamente quello.
+            cicli = max(1, -(-fetched.retry_after // self._interval))
+            motivo = f"Retry-After: {fetched.retry_after}s"
+        else:
+            cicli = min(BLOCKED_INITIAL_CYCLES * 2 ** (count - 1), MAX_BACKOFF_CYCLES)
+            motivo = "nessun Retry-After, uso il backoff"
+
+        self._skip[tf_id] = cicli
+        attesa_min = round(cicli * self._interval / 60)
+        log.warning(
+            "[%s] rifiutato da Apple (HTTP %s, %s): pausa di %d giri (~%d min)",
+            tf_id, fetched.status_code, motivo, cicli, attesa_min,
+        )
+
+        if tf_id in self._block_warned:
+            return
+        self._block_warned.add(tf_id)
+        self._notifier.send(
+            "🚫 <b>Richieste rifiutate da Apple</b>\n"
+            f"📱 App: <b>{esc(name)}</b> (<code>{esc(tf_id)}</code>)\n"
+            f"HTTP <code>{fetched.status_code}</code> — mi fermo per ~{attesa_min} minuti.\n"
+            "Se succede spesso, alza <code>CHECK_INTERVAL</code>."
         )
 
     def _check_freshness(self, tf_id: str, name: str, fetched) -> None:
@@ -175,12 +231,25 @@ class Monitor:
 
     # ── Il giro ────────────────────────────────────────────────────────────
     def check_once(self) -> None:
+        primo = True
         for tf_id, app in list(self._store.apps().items()):
             restanti = self._skip.get(tf_id, 0)
             if restanti > 0:
                 self._skip[tf_id] = restanti - 1
                 continue
+
+            # Pausa fra un'app e l'altra, ma non prima della prima: con più
+            # app in lista le richieste partirebbero altrimenti tutte insieme.
+            if not primo:
+                self._pause_between_apps()
+            primo = False
+
             self.check_app(tf_id, app)
+
+    def _pause_between_apps(self) -> None:
+        minimo, massimo = self._stagger
+        if massimo > 0:
+            time.sleep(random.uniform(minimo, massimo))
 
     def run_forever(self) -> None:
         log.info("▶ Avvio sorveglianza (ogni %ds circa)", self._interval)

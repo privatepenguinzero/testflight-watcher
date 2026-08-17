@@ -41,6 +41,22 @@ Il monitor sorveglia anche il cache-buster stesso: confronta la
 `X-Apple-Jingle-Correlation-Key` fra controlli consecutivi e ti avvisa se
 inizia a ripetersi, cioè se Apple ricominciasse a servire copie vecchie.
 
+### Come si comporta con Apple
+
+Apple non pubblica limiti su queste pagine: `testflight.apple.com` non ha un
+`robots.txt` e le risposte non contengono header di rate limit. A `300s` con
+tre app siamo attorno a 0,01 richieste al secondo, molto sotto qualsiasi
+soglia plausibile — una prova a 2,5 req/s non ha prodotto alcun blocco.
+
+Il bot è comunque costruito per non dare fastidio:
+
+- fingerprint TLS e User-Agent di un browser reale, coerenti fra loro;
+- jitter ±10% sull'intervallo, per non bussare a cadenza esatta;
+- richieste distanziate di 2-8 secondi fra un'app e l'altra, mai in raffica;
+- un rifiuto (`403`/`429`) ferma quell'app per almeno 8 cicli, raddoppiando a
+  ogni rifiuto successivo, e ti arriva un avviso su Telegram;
+- se il server manda `Retry-After`, si aspetta esattamente quel tempo.
+
 ## Configurazione
 
 Crea un file `.env` nella cartella del progetto:
