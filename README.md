@@ -30,6 +30,17 @@ La notifica scatta **solo sul cambio di stato**, quindi niente spam finché il
 beta resta aperto. Le richieste usano `curl_cffi` con fingerprint TLS di Safari
 per non farsi bloccare da Apple.
 
+### Freschezza delle risposte
+
+Apple serve una copia in cache per 600 secondi e ignora gli header `no-cache`.
+I controlli aggiungono quindi un parametro variabile in query string, che
+ottiene una risposta generata al momento: senza, `CHECK_INTERVAL` non
+significherebbe nulla. Il link che ricevi nelle notifiche resta pulito.
+
+Il monitor sorveglia anche il cache-buster stesso: confronta la
+`X-Apple-Jingle-Correlation-Key` fra controlli consecutivi e ti avvisa se
+inizia a ripetersi, cioè se Apple ricominciasse a servire copie vecchie.
+
 ## Configurazione
 
 Crea un file `.env` nella cartella del progetto:

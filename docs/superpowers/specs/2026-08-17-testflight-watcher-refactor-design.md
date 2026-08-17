@@ -62,6 +62,14 @@ Senza cache-buster `CHECK_INTERVAL` non significherebbe nulla: la freschezza
 reale oscillerebbe fra l'intervallo e l'intervallo più 600s a seconda di dove
 si cade nella finestra di cache. Con il cache-buster l'intervallo è esatto.
 
+**Il cache-buster è sorvegliato.** Se Apple iniziasse a includere la query
+string nella chiave di cache, smetterebbe di funzionare *in silenzio* — lo
+stesso schema di guasto del bug originale. Il monitor confronta la
+`X-Apple-Jingle-Correlation-Key` fra controlli consecutivi: se si ripete, la
+risposta viene dalla cache e parte un avviso Telegram, una volta sola finché
+la situazione persiste. È una diagnosi sul trasporto e non altera mai lo stato
+del beta.
+
 ## 3. Il motore di rilevamento
 
 ### 3.1 Due segnali indipendenti

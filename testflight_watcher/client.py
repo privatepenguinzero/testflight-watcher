@@ -55,10 +55,17 @@ def check_url(tf_id: str) -> str:
     return f"{join_url(tf_id)}?_={time.time_ns()}"
 
 
+# Apple assegna questo identificativo a ogni risposta *generata*. Se si ripete
+# fra due controlli, stiamo rileggendo la stessa copia in cache: è il modo per
+# accorgersi se un giorno il cache-buster smettesse di funzionare.
+CORRELATION_HEADER = "X-Apple-Jingle-Correlation-Key"
+
+
 @dataclass(frozen=True)
 class Fetched:
     status_code: int
     body: str
+    correlation_key: str | None = None
 
 
 class TestFlightClient:
@@ -74,4 +81,8 @@ class TestFlightClient:
             # Fingerprint TLS di un browser reale: senza, Apple può bloccare.
             impersonate=self._cfg.impersonate,
         )
-        return Fetched(status_code=r.status_code, body=r.text)
+        return Fetched(
+            status_code=r.status_code,
+            body=r.text,
+            correlation_key=r.headers.get(CORRELATION_HEADER),
+        )

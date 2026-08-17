@@ -33,6 +33,11 @@ class Monitor:
         # riavvio si riparte puliti, che è il comportamento desiderato.
         self._failures: dict[str, int] = {}
         self._skip: dict[str, int] = {}
+        # Ultima correlation-key vista per app, e per quali app abbiamo già
+        # segnalato che le risposte arrivano dalla cache. In memoria: al
+        # riavvio si riparte puliti.
+        self._last_key: dict[str, str] = {}
+        self._cache_warned: set[str] = set()
 
     # ── Un singolo controllo ───────────────────────────────────────────────
     def check_app(self, tf_id: str, app: dict) -> None:
@@ -44,6 +49,8 @@ class Monitor:
         except Exception as e:
             self._register_failure(tf_id, name, e)
             return
+
+        self._check_freshness(tf_id, name, fetched)
 
         detection = classify(fetched.status_code, fetched.body)
 
@@ -78,6 +85,46 @@ class Monitor:
         log.warning(
             "Controllo fallito per %s (%s): %s — riprovo fra %d giri",
             name, tf_id, reason, self._skip[tf_id],
+        )
+
+    def _check_freshness(self, tf_id: str, name: str, fetched) -> None:
+        """Verifica che Apple stia generando la risposta, non ripescandola.
+
+        Il cache-buster in query string ottiene oggi una risposta fresca a ogni
+        richiesta. Se Apple iniziasse a includere la query string nella chiave
+        di cache smetterebbe di funzionare *in silenzio*, e torneremmo a
+        leggere copie vecchie fino a dieci minuti senza accorgercene: lo stesso
+        schema di guasto che ha reso questo bot inutile in passato.
+
+        La correlation-key identifica la risposta generata: se si ripete fra
+        due controlli, stiamo rileggendo la stessa copia.
+
+        Non tocca mai lo stato del beta: è una diagnosi sul trasporto.
+        """
+        key = fetched.correlation_key
+        if not key:
+            return
+
+        precedente = self._last_key.get(tf_id)
+        self._last_key[tf_id] = key
+
+        if precedente is None or key != precedente:
+            self._cache_warned.discard(tf_id)
+            return
+
+        if tf_id in self._cache_warned:
+            return  # già segnalato, non ripetiamo a ogni giro
+        self._cache_warned.add(tf_id)
+
+        log.warning(
+            "[%s] risposta servita dalla cache: correlation-key ripetuta (%s)", tf_id, key
+        )
+        self._notifier.send(
+            "🕰 <b>Risposte dalla cache</b>\n"
+            f"📱 App: <b>{esc(name)}</b> (<code>{esc(tf_id)}</code>)\n"
+            "Apple sta restituendo la stessa copia invece di rigenerarla: il "
+            "cache-buster non fa più effetto.\n"
+            "⚠️ I controlli possono essere vecchi fino a 10 minuti."
         )
 
     # ── Decisioni di notifica ──────────────────────────────────────────────

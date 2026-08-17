@@ -48,6 +48,10 @@ class NotifierFinto:
     def anomalie(self):
         return [m for m in self.messaggi if "Rilevamento incerto" in m]
 
+    @property
+    def cache(self):
+        return [m for m in self.messaggi if "Risposte dalla cache" in m]
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -60,8 +64,8 @@ def monitor(store, client, notifier):
     return Monitor(store, client, notifier, interval=300)
 
 
-def ok(body):
-    return Fetched(status_code=200, body=body)
+def ok(body, key=None):
+    return Fetched(status_code=200, body=body, correlation_key=key)
 
 
 # ── Il caso che prima non funzionava ────────────────────────────────────────
@@ -177,6 +181,82 @@ def test_anomalia_che_rientra_e_si_ripresenta_avvisa_di_nuovo(store):
     m.check_once()
 
     assert len(n.anomalie) == 2
+
+
+# ── Freschezza delle risposte ───────────────────────────────────────────────
+
+def test_correlation_key_ripetuta_segnala_risposte_dalla_cache(store):
+    """Se il cache-buster smettesse di funzionare, deve emergere.
+
+    È lo stesso schema di guasto del bug originale: un pezzo che si rompe
+    senza far rumore. Qui fa rumore.
+    """
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(PIENO, key="STESSA")), n)
+
+    m.check_once()
+    assert n.cache == [], "la prima risposta non ha un termine di paragone"
+
+    m.check_once()
+    assert len(n.cache) == 1
+    assert "aBcD1234" in n.cache[0]
+
+
+def test_l_avviso_di_cache_non_si_ripete_a_ogni_giro(store):
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(PIENO, key="STESSA")), n)
+
+    for _ in range(6):
+        m.check_once()
+
+    assert len(n.cache) == 1
+
+
+def test_chiavi_diverse_non_generano_avvisi(store):
+    """Il funzionamento normale: Apple rigenera a ogni richiesta."""
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(PIENO, "K1"), ok(PIENO, "K2"), ok(PIENO, "K3")), n)
+
+    for _ in range(3):
+        m.check_once()
+
+    assert n.cache == []
+
+
+def test_dopo_una_chiave_fresca_un_nuovo_blocco_riavvisa(store):
+    n = NotifierFinto()
+    m = monitor(
+        store,
+        ClientFinto(ok(PIENO, "K1"), ok(PIENO, "K1"), ok(PIENO, "K2"), ok(PIENO, "K2")),
+        n,
+    )
+    for _ in range(4):
+        m.check_once()
+
+    assert len(n.cache) == 2, "un nuovo blocco è un evento nuovo"
+
+
+def test_il_rilevamento_cache_non_altera_lo_stato_del_beta(store):
+    """È una diagnosi sul trasporto, non sul beta."""
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(APERTO, key="STESSA")), n)
+
+    m.check_once()
+    m.check_once()
+
+    assert store.apps()["aBcD1234"]["state"] == "open"
+    assert len(n.disponibilita) == 1
+
+
+def test_senza_correlation_key_non_si_segnala_nulla(store):
+    """Apple potrebbe togliere l'header: non deve diventare un falso allarme."""
+    n = NotifierFinto()
+    m = monitor(store, ClientFinto(ok(PIENO)), n)
+
+    for _ in range(3):
+        m.check_once()
+
+    assert n.cache == []
 
 
 def test_app_rimossa_durante_il_giro_non_viene_reinserita(store):
