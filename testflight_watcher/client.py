@@ -6,7 +6,12 @@ detector provabile senza rete.
 Note sul mezzo, misurate il 2026-08-17:
 
 - La risposta non contiene né ETag né Last-Modified: niente richieste
-  condizionali, ogni controllo scarica la pagina intera (~40 KB).
+  condizionali, ogni controllo riscarica la pagina intera. Neanche le
+  richieste `Range` sono supportate: l'header viene ignorato e il server
+  risponde 200 con il corpo completo, quindi non si può chiedere solo il
+  frammento che ci interessa. Sul filo sono però ~9,5 KB, non ~41 KB:
+  l'impersonation di curl_cffi include l'Accept-Encoding del browser e la
+  risposta arriva compressa con gzip.
 - Apple serve una copia in cache per 600s. Gli header `Cache-Control: no-cache`
   e `Pragma: no-cache` vengono ignorati, ma un parametro variabile in query
   string ottiene una risposta generata al momento. Si riconosce da

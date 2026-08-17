@@ -46,7 +46,14 @@ classi CSS sono identici. Nessun JSON incorporato.
 
 **Le richieste condizionali non sono supportate.** La risposta di
 `testflight.apple.com` non contiene né `ETag` né `Last-Modified`, quindi non è
-possibile ottenere un `304 Not Modified`. Ogni controllo scarica ~40 KB.
+possibile ottenere un `304 Not Modified`. Nemmeno le richieste `Range` sono
+supportate: l'header viene ignorato e il server risponde `200` con il corpo
+completo, quindi non si può scaricare solo il frammento che serve.
+
+Ogni controllo trasferisce però **~9,5 KB**, non i ~41 KB del documento: la
+risposta arriva compressa con gzip, perché l'impersonation di `curl_cffi`
+include l'`Accept-Encoding` del browser. Non c'è margine di ottimizzazione da
+recuperare qui.
 
 **La cache di Apple è reale ma aggirabile.** Richieste ripetute allo stesso URL
 restituiscono la stessa `X-Apple-Jingle-Correlation-Key` con `max-age`
