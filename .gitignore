@@ -4,7 +4,11 @@
 # Stato locale del monitor
 data/
 *.corrupt
+*.bak-v*
 .data-*.tmp
+
+# Test
+.pytest_cache/
 
 # Python
 __pycache__/

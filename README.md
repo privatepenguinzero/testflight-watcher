@@ -6,19 +6,40 @@ ti avvisa appena si libera un posto.
 ## Come funziona
 
 La pagina `testflight.apple.com/join/<ID>` risponde sempre `200`: lo stato del
-beta non sta nel codice HTTP ma nel blocco `<div class="beta-status">`. Il
-monitor legge quel testo e lo classifica:
+beta non sta nel codice HTTP. Il monitor incrocia **due segnali indipendenti**:
+
+- **strutturale** — su un beta chiuso Apple genera i pulsanti ma ne svuota le
+  etichette, quindi "esiste un `<a class="button">` con testo" equivale a
+  "beta aperto". Non dipende dalla lingua né dalle parole scelte da Apple.
+- **testuale** — il contenuto di `<div class="beta-status">`.
 
 | Stato | Significato |
 |---|---|
 | `open` | Il beta accetta iscrizioni → parte la notifica |
-| `full` | "This beta is full." / "isn't accepting any new testers right now." |
+| `full` | Pieno, non accetta, scaduto o non disponibile |
 | `invalid` | HTTP 404: link rimosso da Apple |
+| `unknown` | I segnali non concordano: nessuna notifica, ma arriva un avviso |
 | `error` | Errore di rete o HTTP inatteso: lo stato precedente resta invariato |
+
+Se i due segnali concordano, quello è lo stato. Se **discordano**, lo stato è
+`unknown` e ricevi un messaggio col testo grezzo letto da Apple. È la rete di
+sicurezza del sistema: perché il bot torni a sbagliare in silenzio, Apple deve
+rompere entrambi i segnali insieme e in modo coerente.
 
 La notifica scatta **solo sul cambio di stato**, quindi niente spam finché il
 beta resta aperto. Le richieste usano `curl_cffi` con fingerprint TLS di Safari
 per non farsi bloccare da Apple.
+
+### Freschezza delle risposte
+
+Apple serve una copia in cache per 600 secondi e ignora gli header `no-cache`.
+I controlli aggiungono quindi un parametro variabile in query string, che
+ottiene una risposta generata al momento: senza, `CHECK_INTERVAL` non
+significherebbe nulla. Il link che ricevi nelle notifiche resta pulito.
+
+Il monitor sorveglia anche il cache-buster stesso: confronta la
+`X-Apple-Jingle-Correlation-Key` fra controlli consecutivi e ti avvisa se
+inizia a ripetersi, cioè se Apple ricominciasse a servire copie vecchie.
 
 ## Configurazione
 
@@ -35,7 +56,7 @@ IMPERSONATE=safari17_0
 |---|---|---|
 | `TELEGRAM_TOKEN` | — | Token del bot, da [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID` | — | Chat delle notifiche, da [@userinfobot](https://t.me/userinfobot). È anche l'unica chat autorizzata a comandare il bot |
-| `CHECK_INTERVAL` | `60` | Secondi tra un controllo e l'altro |
+| `CHECK_INTERVAL` | `300` | Secondi tra un controllo e l'altro (minimo 30) |
 | `IMPERSONATE` | `safari17_0` | Fingerprint TLS. Anche `safari17_2_ios`, `safari18_0`, `chrome124` |
 | `DB_FILE` | `/app/data/data.json` | Percorso dello stato |
 
@@ -63,6 +84,7 @@ image: ghcr.io/privatepenguinzero/testflight-watcher:latest
 | `/remove <ID>` | Rimuove un beta |
 | `/list` | Elenca i beta e il loro stato |
 | `/rename <ID> <Nome>` | Rinomina un beta |
+| `/check <ID>` | Controlla subito e mostra cosa legge da Apple (diagnostica) |
 
 L'`ID` è la parte finale del link di invito:
 `https://testflight.apple.com/join/`**`aBcD1234`**
@@ -75,8 +97,15 @@ Le stesse operazioni si fanno dai pulsanti inline, rinomina inclusa.
 
 ```json
 {
+  "version": 2,
   "apps": {
-    "aBcD1234": { "name": "WhatsApp Beta", "state": "full" }
+    "aBcD1234": {
+      "name": "WhatsApp Beta",
+      "state": "full",
+      "detail": "This beta is full.",
+      "last_checked": "2026-08-17T14:03:11Z",
+      "anomaly_fingerprint": null
+    }
   }
 }
 ```
@@ -84,6 +113,23 @@ Le stesse operazioni si fanno dai pulsanti inline, rinomina inclusa.
 Scrittura atomica (file temporaneo + `os.replace`): un'interruzione a metà non
 lascia un JSON troncato. Se il file risulta illeggibile viene spostato in
 `data.json.corrupt` invece di essere cancellato.
+
+**Aggiornare il container non perde i tuoi ID.** Il file sta sull'host, montato
+come volume, e l'immagine non lo contiene. I formati più vecchi vengono
+convertiti al primo avvio, conservando nomi e stati; prima della conversione
+viene salvata una copia in `data.json.bak-v<versione>`.
+
+## Sviluppo
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -v
+```
+
+I test del rilevamento girano su pagine TestFlight reali salvate in
+`tests/fixtures/` — beta aperti, pieni e rimossi — quindi non serve rete e non
+serve trovare un beta aperto al momento giusto. La CI li esegue prima di
+costruire l'immagine: un rilevamento rotto non arriva su GHCR.
 
 ## Note sui permessi
 
