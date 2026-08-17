@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -44,6 +45,22 @@ def status_label(app: dict) -> str:
         ST_INVALID: "⚠️ Link non valido",
         ST_UNKNOWN: "❓ Rilevamento incerto",
     }.get(app.get("state"), "⏳ Mai controllata")
+
+
+async def safe_edit(query, text: str, **kwargs) -> None:
+    """Modifica il messaggio, tollerando "not modified".
+
+    Telegram rifiuta con BadRequest una modifica che lascia il messaggio
+    identico: succede ogni volta che si ripreme lo stesso pulsante, ed è un
+    non-evento. Senza questa tolleranza ogni doppio clic produceva un
+    traceback nei log.
+    """
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
+        log.debug("Modifica ignorata: il messaggio era già così")
 
 
 def render_list(apps: dict) -> str:
@@ -214,18 +231,21 @@ def build_application(cfg, store, client) -> Application:
 
         if data == "list":
             if not apps:
-                await query.edit_message_text(
-                    "📭 Nessuna app monitorata. Clicca ➕ Aggiungi!",
+                await safe_edit(
+                query,
+    "📭 Nessuna app monitorata. Clicca ➕ Aggiungi!",
                     reply_markup=main_keyboard(),
                 )
                 return
-            await query.edit_message_text(
-                render_list(apps), parse_mode="HTML", reply_markup=main_keyboard()
+            await safe_edit(
+                query,
+render_list(apps), parse_mode="HTML", reply_markup=main_keyboard()
             )
 
         elif data == "prompt_add":
-            await query.edit_message_text(
-                "➕ <b>Aggiungi App</b>\nScrivi il comando così:\n\n"
+            await safe_edit(
+                query,
+"➕ <b>Aggiungi App</b>\nScrivi il comando così:\n\n"
                 "<code>/add ID_TestFlight Nome App</code>\n\n"
                 "L'ID è la parte finale del link di invito.",
                 parse_mode="HTML",
@@ -235,8 +255,9 @@ def build_application(cfg, store, client) -> Application:
         elif data in ("prompt_remove", "prompt_rename"):
             rimozione = data == "prompt_remove"
             if not apps:
-                await query.edit_message_text(
-                    "📭 Non ci sono app in lista!", reply_markup=main_keyboard()
+                await safe_edit(
+                query,
+    "📭 Non ci sono app in lista!", reply_markup=main_keyboard()
                 )
                 return
             prefisso = "remove_" if rimozione else "select_rename_"
@@ -246,8 +267,9 @@ def build_application(cfg, store, client) -> Application:
                 for tf_id, a in apps.items()
             ]
             tastiera.append([InlineKeyboardButton("⬅️ Indietro", callback_data="back")])
-            await query.edit_message_text(
-                f"{icona} <b>Scegli l'app:</b>",
+            await safe_edit(
+                query,
+f"{icona} <b>Scegli l'app:</b>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(tastiera),
             )
@@ -256,12 +278,14 @@ def build_application(cfg, store, client) -> Application:
             tf_id = data[len("remove_"):]
             app = store.remove(tf_id)
             if app is None:
-                await query.edit_message_text(
-                    "⚠️ App già rimossa.", reply_markup=main_keyboard()
+                await safe_edit(
+                query,
+    "⚠️ App già rimossa.", reply_markup=main_keyboard()
                 )
                 return
-            await query.edit_message_text(
-                f"🗑 Rimosso: <b>{esc(app['name'])}</b> (<code>{esc(tf_id)}</code>)",
+            await safe_edit(
+                query,
+f"🗑 Rimosso: <b>{esc(app['name'])}</b> (<code>{esc(tf_id)}</code>)",
                 parse_mode="HTML",
                 reply_markup=main_keyboard(),
             )
@@ -270,15 +294,17 @@ def build_application(cfg, store, client) -> Application:
             tf_id = data[len("select_rename_"):]
             ctx.user_data["renaming_id"] = tf_id
             ctx.user_data["action"] = "waiting_rename"
-            await query.edit_message_text(
-                f"✏️ Stai rinominando <code>{esc(tf_id)}</code>.\n"
+            await safe_edit(
+                query,
+f"✏️ Stai rinominando <code>{esc(tf_id)}</code>.\n"
                 "Scrivi ora il nuovo nome (senza /):",
                 parse_mode="HTML",
             )
 
         elif data == "back":
-            await query.edit_message_text(
-                "🤖 <b>Menu Principale</b>",
+            await safe_edit(
+                query,
+"🤖 <b>Menu Principale</b>",
                 parse_mode="HTML",
                 reply_markup=main_keyboard(),
             )
@@ -312,7 +338,18 @@ def build_application(cfg, store, client) -> Application:
             reply_markup=main_keyboard(),
         )
 
+    async def on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Punto unico di raccolta degli errori.
+
+        Senza, ogni eccezione finiva nei log come traceback grezzo preceduto
+        da "No error handlers are registered". Conta anche per il ciclo di
+        sorveglianza, che gira nel JobQueue della stessa applicazione: i suoi
+        errori passano di qui.
+        """
+        log.error("Errore non gestito: %s", ctx.error, exc_info=ctx.error)
+
     app = Application.builder().token(cfg.telegram_token).build()
+    app.add_error_handler(on_error)
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("add", add_cmd))
     app.add_handler(CommandHandler("remove", remove_cmd))
