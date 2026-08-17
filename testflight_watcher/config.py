@@ -12,12 +12,15 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-# Apple dichiara `Cache-Control: max-age=600` sulle pagine di join: sotto i
-# 600s si rischia di rileggere la stessa copia in cache. 300s è un compromesso
-# fra reattività e richieste sprecate.
+# Il cache-buster in client.py fa sì che ogni controllo ottenga una risposta
+# generata al momento: l'intervallo è quindi la latenza di rilevamento reale,
+# non un valore diluito dalla cache di Apple. Il rovescio è che ogni controllo
+# colpisce l'origine, quindi intervalli brevi si traducono in traffico vero.
+# 300s è un compromesso prudente; scendere è legittimo se serve reattività.
 DEFAULT_CHECK_INTERVAL = 300
-APPLE_CACHE_SECONDS = 600
 MIN_CHECK_INTERVAL = 30
+# Sotto questa soglia il volume di richieste inizia a essere degno di nota.
+CHATTY_CHECK_INTERVAL = 120
 
 
 class ConfigError(RuntimeError):
@@ -58,8 +61,7 @@ def _interval(env: dict) -> int:
     if value < MIN_CHECK_INTERVAL:
         raise ConfigError(
             f"CHECK_INTERVAL={value} è troppo basso: minimo {MIN_CHECK_INTERVAL}s. "
-            "Bussare più spesso non anticipa la risposta di Apple, che tiene la "
-            f"pagina in cache per {APPLE_CACHE_SECONDS}s."
+            "Ogni controllo è una richiesta all'origine di Apple."
         )
     return value
 
@@ -75,13 +77,16 @@ def load_config(env: dict | None = None) -> Config:
         impersonate=(env.get("IMPERSONATE") or "safari17_0").strip(),
     )
 
-    if cfg.check_interval < APPLE_CACHE_SECONDS:
+    if cfg.check_interval < CHATTY_CHECK_INTERVAL:
+        # Non è un errore: è una scelta legittima per beta molto contesi. Ma
+        # sotto i 120s il volume verso Apple cresce in fretta e vale la pena
+        # che sia una decisione consapevole, non un default dimenticato.
         log.info(
-            "CHECK_INTERVAL=%ds è sotto i %ds di cache dichiarati da Apple: "
-            "parte dei controlli leggerà con ogni probabilità una copia già "
-            "vista, senza guadagno di reattività.",
+            "CHECK_INTERVAL=%ds: circa %d richieste al giorno per app. "
+            "Le risposte sono fresche (cache-buster attivo), ma intervalli "
+            "brevi aumentano il rischio di rate-limiting da parte di Apple.",
             cfg.check_interval,
-            APPLE_CACHE_SECONDS,
+            round(86400 / cfg.check_interval),
         )
 
     return cfg
