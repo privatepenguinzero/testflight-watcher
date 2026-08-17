@@ -16,8 +16,29 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # I test girano PRIMA del build: un detector rotto non deve arrivare su GHCR.
+  # È esattamente il caso che si è verificato in passato, quando l'immagine
+  # pubblicata non era in grado di rilevare un beta aperto.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa le dipendenze
+        run: pip install -r requirements-dev.txt
+
+      - name: Esegui i test
+        run: python -m pytest tests/ -v
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: test
     permissions:
       contents: read
       packages: write

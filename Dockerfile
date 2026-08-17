@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia lo script
-COPY monitor.py .
+# Copia il package
+COPY testflight_watcher/ ./testflight_watcher/
 
 # Utente non-root. L'UID/GID 1000 coincide con quello del proprietario di
 # ./data sull'host: così il volume è scrivibile senza dover far girare il
@@ -22,4 +22,4 @@ RUN useradd -u 1000 -U -m -s /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["python", "-u", "monitor.py"]
+CMD ["python", "-u", "-m", "testflight_watcher"]

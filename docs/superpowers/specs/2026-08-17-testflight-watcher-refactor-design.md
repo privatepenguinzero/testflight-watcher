@@ -48,10 +48,19 @@ classi CSS sono identici. Nessun JSON incorporato.
 `testflight.apple.com` non contiene né `ETag` né `Last-Modified`, quindi non è
 possibile ottenere un `304 Not Modified`. Ogni controllo scarica ~40 KB.
 
-**Apple dichiara il contenuto valido per 10 minuti** (`Cache-Control: max-age=600`).
-Un intervallo di polling di 60s produce quindi con ogni probabilità nove
-risposte in cache su dieci. *Nota: dedotto dagli header, non misurato con un
-cambio di stato reale.*
+**La cache di Apple è reale ma aggirabile.** Richieste ripetute allo stesso URL
+restituiscono la stessa `X-Apple-Jingle-Correlation-Key` con `max-age`
+decrescente (600 → 478 → …): è una copia che invecchia. Gli header
+`Cache-Control: no-cache` e `Pragma: no-cache` vengono ignorati.
+
+Un parametro variabile in query string (`?_=<nanosecondi>`) ottiene invece una
+risposta generata al momento: correlation-key diversa a ogni richiesta e
+`max-age` pieno a 600. Verificato il 2026-08-17, e verificato che non alteri la
+pagina servita (un beta aperto resta aperto, uno pieno resta pieno).
+
+Senza cache-buster `CHECK_INTERVAL` non significherebbe nulla: la freschezza
+reale oscillerebbe fra l'intervallo e l'intervallo più 600s a seconda di dove
+si cade nella finestra di cache. Con il cache-buster l'intervallo è esatto.
 
 ## 3. Il motore di rilevamento
 

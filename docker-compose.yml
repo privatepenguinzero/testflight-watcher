@@ -13,7 +13,9 @@ services:
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
+      # Apple dichiara Cache-Control: max-age=600 sulle pagine di join:
+      # scendere sotto i 600s non anticipa la risposta, la rilegge dalla cache.
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-300}
       # Fingerprint TLS impersonato da curl_cffi
       - IMPERSONATE=${IMPERSONATE:-safari17_0}
     volumes:
