@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<title></title>
+<link rel="stylesheet" href="/styles/main.css">
+<style type='text/css'>
+    /*include ../../dist/styles/main.css*/
+</style>
+</head>
+
+<body><div id="wrapper" class="j42">
+<h2>Not Found</h2></div>
+
+<div class="footer">
+    <p>Copyright &copy; <span id='year'>2015</span> Apple Inc. All rights reserved.</p>
+    <ul><li><a href="https://www.apple.com/legal/internet-services/itunes/">Terms of Service</a></li><li><a href="https://www.apple.com/legal/privacy">Privacy Policy</a></li></ul>
+</div>
+
+
+<script type='text/javascript'>(function() {
+    var isIos = navigator.userAgent.match(/(iPod|iPhone|iPad)/);
+    document.body.setAttribute( 'class', (!isIos) ? 'otherBrowser' : 'isMobileSafari' )
+    var yearEl = document.getElementById('year');
+    if (yearEl) { yearEl.textContent = new Date().getFullYear(); }
+})();
+</script>
+
+</body>
+</html>
