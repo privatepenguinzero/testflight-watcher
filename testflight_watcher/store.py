@@ -93,6 +93,23 @@ class Store:
     def apps(self) -> dict:
         return self.load()["apps"]
 
+    # ── Battito del ciclo ──────────────────────────────────────────────────
+    def record_cycle(self) -> None:
+        """Segna che un giro di controlli è stato completato.
+
+        Distinto da `last_checked` delle singole app: un'app in backoff o
+        rifiutata da Apple ha un `last_checked` vecchio pur essendo tutto
+        sano. Questo campo dice soltanto "il loop è vivo", che è ciò che
+        l'healthcheck deve sapere.
+        """
+        with self._lock:
+            db = self.load()
+            db["last_cycle"] = _now()
+            self._save(db)
+
+    def last_cycle(self) -> str | None:
+        return self.load().get("last_cycle")
+
     # ── Migrazione di schema ───────────────────────────────────────────────
     def migrate(self) -> bool:
         """Porta il file allo schema corrente. Idempotente.

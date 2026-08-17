@@ -21,6 +21,16 @@ services:
     volumes:
       # Mappa solo la CARTELLA, non il file singolo!
       - ./data:/app/data
+    # Senza questo il container resterebbe "Up" anche con la sorveglianza
+    # ferma: il bot continuerebbe a rispondere ai comandi mostrando gli
+    # ultimi stati salvati, sembrando perfettamente vivo.
+    healthcheck:
+      test: ["CMD", "python", "-m", "testflight_watcher.healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # Il primo giro di controlli deve avere il tempo di completarsi.
+      start_period: 90s
     networks:
       - frontend
 networks:

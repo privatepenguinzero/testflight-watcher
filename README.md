@@ -135,6 +135,26 @@ come volume, e l'immagine non lo contiene. I formati più vecchi vengono
 convertiti al primo avvio, conservando nomi e stati; prima della conversione
 viene salvata una copia in `data.json.bak-v<versione>`.
 
+## Se il monitoraggio si ferma
+
+Il container espone un healthcheck. Non guarda se il processo è vivo — lo
+sarebbe comunque — ma se un **giro di controlli** è stato completato di
+recente:
+
+```bash
+docker compose ps          # healthy / unhealthy
+docker compose exec testflight-watcher python -m testflight_watcher.healthcheck
+```
+
+Serve a chiudere l'ultimo modo che questo bot ha di mentire in silenzio: senza,
+un monitoraggio bloccato lascerebbe il container `Up` e il bot continuerebbe a
+rispondere a `/list` mostrando gli ultimi stati salvati, sembrando perfettamente
+in salute mentre da ore non controlla niente.
+
+Il battito è di ciclo, non di singola app: un beta in backoff perché Apple lo
+sta rifiutando ha un `last_checked` vecchio, ma non è un guasto e non deve far
+riavviare nulla. La soglia è tre intervalli.
+
 ## Sviluppo
 
 ```bash

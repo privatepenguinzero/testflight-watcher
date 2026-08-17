@@ -246,23 +246,20 @@ class Monitor:
 
             self.check_app(tf_id, app)
 
+        # Fuori dal ciclo e senza condizioni: anche un giro in cui ogni app
+        # era in backoff è un giro completato, e l'healthcheck deve saperlo.
+        self._store.record_cycle()
+
     def _pause_between_apps(self) -> None:
         minimo, massimo = self._stagger
         if massimo > 0:
             time.sleep(random.uniform(minimo, massimo))
 
-    def run_forever(self) -> None:
-        log.info("▶ Avvio sorveglianza (ogni %ds circa)", self._interval)
-        while True:
-            try:
-                self.check_once()
-            except Exception as e:
-                # Il thread non deve mai morire: senza questo un errore
-                # imprevisto spegneva il monitoraggio lasciando vivo il bot,
-                # che continuava a rispondere come se tutto funzionasse.
-                log.exception("Errore nel ciclo di sorveglianza: %s", e)
-            time.sleep(self._next_delay())
+    def jitter_seconds(self) -> float:
+        """Scarto casuale da attendere prima di un giro, fino al 10%.
 
-    def _next_delay(self) -> float:
-        """Intervallo con jitter ±10%, per non bussare a cadenza esatta."""
-        return self._interval * random.uniform(0.9, 1.1)
+        Il JobQueue richiama a cadenza fissa: senza questo il bot busserebbe
+        ad Apple a intervalli perfettamente regolari, che è il segnale più
+        facile da riconoscere come automatico.
+        """
+        return self._interval * random.uniform(0, 0.1)

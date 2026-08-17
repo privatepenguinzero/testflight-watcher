@@ -1,2 +1,4 @@
 curl-cffi==0.15.0
-python-telegram-bot==21.3
+# [job-queue] porta APScheduler: il ciclo di sorveglianza gira nel JobQueue
+# dell'applicazione, non in un thread staccato.
+python-telegram-bot[job-queue]==21.3

@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 import sys
-from threading import Thread
 
 from .bot import build_application
 from .client import TestFlightClient
@@ -46,11 +47,45 @@ def main() -> int:
     client = TestFlightClient(cfg)
     notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id)
     monitor = Monitor(store, client, notifier, cfg.check_interval)
+    app = build_application(cfg, store, client)
 
-    Thread(target=monitor.run_forever, daemon=True, name="monitor").start()
+    # Il monitoraggio gira nel JobQueue invece che in un thread staccato: così
+    # nasce e muore con l'applicazione, gli errori passano dal suo error
+    # handler e non resta un daemon thread che nessuno sorveglia.
+    # Il lavoro è bloccante (curl_cffi), quindi va comunque fuori dal loop
+    # asyncio: il lock nello Store resta necessario.
+    async def giro(_context) -> None:
+        try:
+            # run_repeating ha cadenza fissa: il jitter va aggiunto qui, per
+            # non bussare ad Apple a intervalli perfettamente regolari.
+            await asyncio.sleep(monitor.jitter_seconds())
+            await asyncio.to_thread(monitor.check_once)
+        except Exception as e:
+            # Un giro fallito non deve fermare quelli successivi.
+            log.exception("Errore nel ciclo di sorveglianza: %s", e)
 
-    log.info("▶ Avvio bot Telegram (%d app in lista)", len(store.apps()))
-    build_application(cfg, store, client).run_polling(drop_pending_updates=True)
+    if app.job_queue is None:
+        log.error(
+            "JobQueue non disponibile: manca APScheduler. "
+            "Installa python-telegram-bot[job-queue]."
+        )
+        return 1
+
+    app.job_queue.run_repeating(
+        giro,
+        interval=cfg.check_interval,
+        # Jitter sul primo avvio: due container riavviati insieme non partono
+        # in perfetta sincronia verso Apple.
+        first=random.uniform(0, min(10, cfg.check_interval)),
+        name="sorveglianza",
+    )
+
+    log.info(
+        "▶ Avvio (%d app in lista, controllo ogni %ds)",
+        len(store.apps()),
+        cfg.check_interval,
+    )
+    app.run_polling(drop_pending_updates=True)
     return 0
 
 

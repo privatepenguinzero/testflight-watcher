@@ -167,8 +167,9 @@ testflight_watcher/
   client.py      curl_cffi → HTML grezzo. L'unico che parla con Apple
   store.py       JSON atomico + RLock + migrazione di schema
   notifier.py    invio Telegram sincrono, usato dal monitor
-  monitor.py     il loop: client → detector → store → notifier
+  monitor.py     il giro: client → detector → store → notifier
   bot.py         handler Telegram: comandi, bottoni, rinomina
+  healthcheck.py "il monitor è ancora vivo?" → exit 0/1
 tests/
   fixtures/      i campioni HTML reali (già acquisiti nel repo)
   test_detector.py
