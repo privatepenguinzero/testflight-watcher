@@ -1,0 +1,49 @@
+name: Dependabot automerge
+
+# Merges Dependabot's minor and patch updates (GitHub Actions included) once
+# every other check on the PR has passed, then deletes the branch. Major
+# updates are left open for a human. Merging here instead of through GitHub's
+# auto-merge because that needs branch protection to wait for tests, and it
+# isn't available on private repos on the free plan.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Read the update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Wait for the other checks, then merge
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SELF: ${{ github.workflow }}
+        run: |
+          # Give the other workflows time to register their checks.
+          sleep 60
+          while :; do
+            # gh exits non-zero while checks are pending or when there are
+            # none, so only its output matters here.
+            others=$(gh pr checks "$PR_URL" --json workflow,bucket \
+              --jq "[.[] | select(.workflow != \"$SELF\")]" 2>/dev/null) || true
+            [ -n "$others" ] || others='[]'
+            if jq -e 'any(.bucket == "fail" or .bucket == "cancel")' <<<"$others" >/dev/null; then
+              echo "A check failed; leaving the PR open."
+              exit 1
+            fi
+            if jq -e 'all(.bucket != "pending")' <<<"$others" >/dev/null; then
+              break
+            fi
+            sleep 30
+          done
+          gh pr merge "$PR_URL" --squash --delete-branch
